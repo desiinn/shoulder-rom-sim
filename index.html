@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>肩可動域チェッカー | 工業試験場</title>
+
+  <!-- ===== MediaPipe Pose ライブラリ (CDN) ===== -->
+  <!-- 姿勢推定に必要な MediaPipe の各モジュールを読み込む -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js" crossorigin="anonymous"></script>
+
+  <style>
+    /* ===================================================
+       CSS カスタムプロパティ（テーマ変数）
+       色・フォント・サイズを一元管理することで、
+       後から別開発者が簡単にテーマ変更できるようにしている
+    =================================================== */
+    :root {
+      --bg:            #0a0c10;
+      --surface:       #12151c;
+      --border:        #1e2433;
+      --accent:        #00d4ff;
+      --accent-dim:    #0099bb;
+      --text-primary:  #e8eaf2;
+      --text-muted:    #5a6380;
+      --ok-color:      #00e676;
+      --warn-color:    #ff3d3d;
+      --overlay-warn:  rgba(220, 30, 30, 0.45);
+      --font-display:  'Courier New', 'Lucida Console', monospace;
+      --font-body:     'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
+      --radius:        8px;
+    }
+
+    /* ===== リセット & ベース ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      overflow: hidden;
+    }
+
+    /* ===== ヘッダー ===== */
+    header {
+      width: 100%;
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      z-index: 10;
+    }
+    header .logo-mark {
+      width: 34px; height: 34px;
+      border: 2px solid var(--accent);
+      border-radius: 6px;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      color: var(--accent);
+      font-family: var(--font-display);
+      font-weight: bold;
+      flex-shrink: 0;
+    }
+    header h1 {
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      color: var(--text-primary);
+      line-height: 1.3;
+    }
+    header h1 span {
+      display: block;
+      font-size: 10px;
+      color: var(--text-muted);
+      font-weight: 400;
+      letter-spacing: 0.08em;
+    }
+    /* 接続ステータス表示（将来的な M5Stack 通信状態などにも流用可） */
+    .status-badge {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+    .status-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      transition: background 0.4s;
+    }
+    .status-dot.active { background: var(--ok-color); box-shadow: 0 0 6px var(--ok-color); }
+    .status-dot.warn   { background: var(--warn-color); box-shadow: 0 0 6px var(--warn-color); }
+
+    /* ===== メインレイアウト ===== */
+    main {
+      flex: 1;
+      width: 100%;
+      max-width: 960px;
+      padding: 14px 16px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* ===== カメラ映像エリア ===== */
+    .camera-wrapper {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: #000;
+      border-radius: var(--radius);
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    /* カメラ映像は非表示（canvas に描画するため） */
+    #input-video {
+      position: absolute;
+      width: 1px; height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* 姿勢描画キャンバス */
+    #output-canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    /* 可動域超過時に映像全体を赤く染めるオーバーレイ */
+    #alert-overlay {
+      position: absolute;
+      inset: 0;
+      background: var(--overlay-warn);
+      opacity: 0;
+      transition: opacity 0.2s ease;
+      pointer-events: none;
+      border-radius: var(--radius);
+      /* パルスアニメーションは JS で .pulsing クラスを付与して制御 */
+    }
+    #alert-overlay.active { opacity: 1; }
+
+    /* 超過アラートテキスト */
+    .alert-banner {
+      position: absolute;
+      top: 12px; left: 50%;
+      transform: translateX(-50%);
+      background: rgba(220,30,30,0.85);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      padding: 6px 18px;
+      border-radius: 20px;
+      white-space: nowrap;
+      opacity: 0;
+      transition: opacity 0.2s;
+      pointer-events: none;
+    }
+    .alert-banner.active { opacity: 1; }
+
+    /* スケルトン描画が始まるまでのローディング表示 */
+    #loading-msg {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: var(--text-muted);
+      font-size: 13px;
+    }
+    .spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #loading-msg.hidden { display: none; }
+
+    /* ===== メトリクスパネル ===== */
+    .metrics-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+    }
+
+    .metric-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .metric-card .label {
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--text-muted);
+      text-transform: uppercase;
+    }
+    .metric-card .value {
+      font-family: var(--font-display);
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1;
+      transition: color 0.2s;
+    }
+    /* 制限超過時に数値を赤くする */
+    .metric-card .value.over { color: var(--warn-color); }
+    .metric-card .unit {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ===== ゲージバー ===== */
+    .gauge-wrap {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+    }
+    .gauge-label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .gauge-track {
+      position: relative;
+      height: 10px;
+      background: var(--border);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    /* 制限角度を示す縦線マーカー */
+    .gauge-limit-line {
+      position: absolute;
+      top: 0; bottom: 0;
+      width: 2px;
+      background: rgba(255,255,255,0.35);
+      z-index: 2;
+    }
+    .gauge-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 5px;
+      background: var(--ok-color);
+      transition: width 0.1s ease, background 0.2s ease;
+    }
+    .gauge-fill.over { background: var(--warn-color); }
+
+    /* ===== フッター ===== */
+    footer {
+      padding: 8px;
+      font-size: 10px;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ===== ヘッダー ===== -->
+<header>
+  <div class="logo-mark">肩</div>
+  <h1>
+    肩可動域チェッカー
+    <span>SHOULDER ROM MONITOR — 工業試験場プロトタイプ</span>
+  </h1>
+  <div class="status-badge">
+    <div class="status-dot" id="pose-status-dot"></div>
+    <span id="pose-status-text">初期化中...</span>
+  </div>
+</header>
+
+<!-- ===== メインコンテンツ ===== -->
+<main>
+
+  <!-- カメラ映像 + オーバーレイ -->
+  <div class="camera-wrapper">
+    <!-- MediaPipe に渡す入力映像（非表示） -->
+    <video id="input-video" playsinline></video>
+    <!-- 骨格・角度を描画するキャンバス -->
+    <canvas id="output-canvas"></canvas>
+    <!-- 可動域超過時の赤オーバーレイ -->
+    <div id="alert-overlay"></div>
+    <!-- 超過アラートバナー -->
+    <div class="alert-banner" id="alert-banner">⚠ 可動域制限を超過しています</div>
+    <!-- ローディング表示 -->
+    <div id="loading-msg">
+      <div class="spinner"></div>
+      <span>カメラ・姿勢推定を起動中...</span>
+    </div>
+  </div>
+
+  <!-- 数値メトリクス -->
+  <div class="metrics-row">
+    <div class="metric-card">
+      <div class="label">現在の挙上角度</div>
+      <div class="value" id="angle-display">---</div>
+      <div class="unit">度 (°)</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">制限角度</div>
+      <div class="value" id="limit-display">70</div>
+      <div class="unit">度 (°) — 変更可</div>
+    </div>
+    <div class="metric-card">
+      <div class="label">ステータス</div>
+      <div class="value" id="status-display" style="font-size:16px; margin-top:4px;">---</div>
+      <div class="unit">&nbsp;</div>
+    </div>
+  </div>
+
+  <!-- ゲージバー -->
+  <div class="gauge-wrap">
+    <div class="gauge-label">
+      <span>0°</span>
+      <span id="gauge-label-limit">制限: 70°</span>
+      <span>180°</span>
+    </div>
+    <div class="gauge-track">
+      <!-- 制限角度マーカー（JS で位置を設定） -->
+      <div class="gauge-limit-line" id="gauge-limit-line"></div>
+      <div class="gauge-fill" id="gauge-fill"></div>
+    </div>
+  </div>
+
+</main>
+
+<footer>MediaPipe Pose — 右肩挙上角度モニタリング MVP v1.0</footer>
+
+<!-- ===== JavaScript ===== -->
+<script src="script.js"></script>
+</body>
+</html>
