@@ -3,10 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>肩可動域チェッカー | 工業試験場</title>
+  <title>肩可動域チェッカー試作</title>
 
-  <!-- ===== MediaPipe Pose ライブラリ (CDN) ===== -->
-  <!-- 姿勢推定に必要な MediaPipe の各モジュールを読み込む -->
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -15,23 +13,21 @@
   <style>
     /* ===================================================
        CSS カスタムプロパティ（テーマ変数）
-       色・フォント・サイズを一元管理することで、
-       後から別開発者が簡単にテーマ変更できるようにしている
     =================================================== */
     :root {
-      --bg:            #0a0c10;
-      --surface:       #12151c;
-      --border:        #1e2433;
+      --bg:            #0c0f17;
+      --surface:       #161b26;
+      --surface-card:  #1e2533;
+      --border:        #2b354a;
       --accent:        #00d4ff;
-      --accent-dim:    #0099bb;
-      --text-primary:  #e8eaf2;
-      --text-muted:    #5a6380;
+      --text-primary:  #f0f2f8;
+      --text-muted:    #7685a6;
       --ok-color:      #00e676;
       --warn-color:    #ff3d3d;
-      --overlay-warn:  rgba(220, 30, 30, 0.45);
+      --overlay-warn:  rgba(255, 61, 61, 0.25);
       --font-display:  'Courier New', 'Lucida Console', monospace;
       --font-body:     'Hiragino Kaku Gothic ProN', 'Meiryo', sans-serif;
-      --radius:        8px;
+      --radius:        12px;
     }
 
     /* ===== リセット & ベース ===== */
@@ -45,37 +41,35 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      overflow: hidden;
+      overflow-x: hidden;
     }
 
     /* ===== ヘッダー ===== */
     header {
       width: 100%;
-      padding: 10px 20px;
+      padding: 12px 20px;
       display: flex;
       align-items: center;
-      gap: 14px;
+      gap: 12px;
       background: var(--surface);
       border-bottom: 1px solid var(--border);
       z-index: 10;
     }
     header .logo-mark {
-      width: 34px; height: 34px;
+      width: 32px; height: 32px;
       border: 2px solid var(--accent);
       border-radius: 6px;
       display: grid;
       place-items: center;
-      font-size: 16px;
+      font-size: 14px;
       color: var(--accent);
       font-family: var(--font-display);
       font-weight: bold;
-      flex-shrink: 0;
     }
     header h1 {
       font-size: 13px;
       font-weight: 600;
       letter-spacing: 0.05em;
-      color: var(--text-primary);
       line-height: 1.3;
     }
     header h1 span {
@@ -83,35 +77,31 @@
       font-size: 10px;
       color: var(--text-muted);
       font-weight: 400;
-      letter-spacing: 0.08em;
     }
-    /* 接続ステータス表示（将来的な M5Stack 通信状態などにも流用可） */
     .status-badge {
       margin-left: auto;
       display: flex;
       align-items: center;
       gap: 6px;
       font-size: 11px;
-      color: var(--text-muted);
     }
     .status-dot {
       width: 8px; height: 8px;
       border-radius: 50%;
       background: var(--text-muted);
-      transition: background 0.4s;
     }
-    .status-dot.active { background: var(--ok-color); box-shadow: 0 0 6px var(--ok-color); }
-    .status-dot.warn   { background: var(--warn-color); box-shadow: 0 0 6px var(--warn-color); }
+    .status-dot.active { background: var(--ok-color); box-shadow: 0 0 8px var(--ok-color); }
+    .status-dot.warn   { background: var(--warn-color); box-shadow: 0 0 8px var(--warn-color); }
 
     /* ===== メインレイアウト ===== */
     main {
       flex: 1;
       width: 100%;
-      max-width: 960px;
-      padding: 14px 16px 16px;
+      max-width: 680px;
+      padding: 16px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 14px;
     }
 
     /* ===== カメラ映像エリア ===== */
@@ -123,17 +113,13 @@
       border-radius: var(--radius);
       overflow: hidden;
       border: 1px solid var(--border);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.3);
     }
-
-    /* カメラ映像は非表示（canvas に描画するため） */
     #input-video {
       position: absolute;
       width: 1px; height: 1px;
       opacity: 0;
-      pointer-events: none;
     }
-
-    /* 姿勢描画キャンバス */
     #output-canvas {
       position: absolute;
       inset: 0;
@@ -141,40 +127,36 @@
       height: 100%;
       object-fit: cover;
     }
-
-    /* 可動域超過時に映像全体を赤く染めるオーバーレイ */
     #alert-overlay {
       position: absolute;
       inset: 0;
       background: var(--overlay-warn);
       opacity: 0;
-      transition: opacity 0.2s ease;
+      transition: opacity 0.15s ease;
       pointer-events: none;
-      border-radius: var(--radius);
-      /* パルスアニメーションは JS で .pulsing クラスを付与して制御 */
+      box-shadow: inset 0 0 60px rgba(255,0,0,0.5);
     }
     #alert-overlay.active { opacity: 1; }
 
-    /* 超過アラートテキスト */
     .alert-banner {
       position: absolute;
-      top: 12px; left: 50%;
+      top: 14px; left: 50%;
       transform: translateX(-50%);
-      background: rgba(220,30,30,0.85);
+      background: var(--warn-color);
       color: #fff;
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 700;
-      letter-spacing: 0.1em;
-      padding: 6px 18px;
-      border-radius: 20px;
-      white-space: nowrap;
+      letter-spacing: 0.05em;
+      padding: 8px 20px;
+      border-radius: 30px;
+      box-shadow: 0 4px 12px rgba(255,61,61,0.3);
       opacity: 0;
-      transition: opacity 0.2s;
-      pointer-events: none;
+      transition: opacity 0.15s;
+      white-space: nowrap;
+      z-index: 5;
     }
     .alert-banner.active { opacity: 1; }
 
-    /* スケルトン描画が始まるまでのローディング表示 */
     #loading-msg {
       position: absolute;
       inset: 0;
@@ -183,127 +165,147 @@
       align-items: center;
       justify-content: center;
       gap: 12px;
+      background: var(--bg);
       color: var(--text-muted);
-      font-size: 13px;
     }
     .spinner {
-      width: 32px; height: 32px;
+      width: 36px; height: 36px;
       border: 3px solid var(--border);
       border-top-color: var(--accent);
       border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
     #loading-msg.hidden { display: none; }
 
-    /* ===== メトリクスパネル ===== */
-    .metrics-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 10px;
+    /* ===== 情報・操作系パネル群 ===== */
+    .panel-vertical {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
     }
 
     .metric-card {
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 12px 14px;
+      padding: 16px 20px;
+    }
+    .metric-card .card-header {
       display: flex;
-      flex-direction: column;
-      gap: 4px;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
     }
     .metric-card .label {
-      font-size: 10px;
-      letter-spacing: 0.1em;
+      font-size: 11px;
+      font-weight: 600;
       color: var(--text-muted);
-      text-transform: uppercase;
+      letter-spacing: 0.05em;
     }
-    .metric-card .value {
-      font-family: var(--font-display);
-      font-size: 28px;
-      font-weight: 700;
-      color: var(--accent);
-      line-height: 1;
-      transition: color 0.2s;
-    }
-    /* 制限超過時に数値を赤くする */
-    .metric-card .value.over { color: var(--warn-color); }
     .metric-card .unit {
       font-size: 11px;
       color: var(--text-muted);
     }
 
-    /* ===== ゲージバー ===== */
-    .gauge-wrap {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 12px 16px;
-    }
-    .gauge-label {
+    /* 左右の数値モニター */
+    .angle-monitor-wrap {
       display: flex;
       justify-content: space-between;
-      font-size: 10px;
+      gap: 14px;
+    }
+    .angle-pane {
+      flex: 1;
+      background: var(--surface-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 8px;
+      text-align: center;
+    }
+    .angle-pane .pane-label {
+      font-size: 12px;
       color: var(--text-muted);
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      margin-bottom: 8px;
+      margin-bottom: 4px;
+      font-weight: 600;
     }
-    .gauge-track {
-      position: relative;
-      height: 10px;
-      background: var(--border);
-      border-radius: 5px;
-      overflow: hidden;
+    .angle-pane .value {
+      font-family: var(--font-display);
+      font-size: 64px;
+      font-weight: 700;
+      color: var(--accent);
+      line-height: 1;
     }
-    /* 制限角度を示す縦線マーカー */
-    .gauge-limit-line {
-      position: absolute;
-      top: 0; bottom: 0;
-      width: 2px;
-      background: rgba(255,255,255,0.35);
-      z-index: 2;
+    /* 制限超過時に数値を赤くする */
+    .angle-pane .value.over {
+      color: var(--warn-color);
+      text-shadow: 0 0 12px rgba(255, 61, 61, 0.3);
     }
-    .gauge-fill {
-      height: 100%;
-      width: 0%;
-      border-radius: 5px;
-      background: var(--ok-color);
-      transition: width 0.1s ease, background 0.2s ease;
+
+    /* 操作設定エリア */
+    .control-container {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 8px 0;
     }
-    .gauge-fill.over { background: var(--warn-color); }
+    .custom-slider {
+      flex: 1;
+      height: 14px;
+      border-radius: 7px;
+      outline: none;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .limit-num-input {
+      background: var(--surface-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--accent);
+      font-family: var(--font-display);
+      font-size: 28px;
+      font-weight: 700;
+      width: 85px;
+      height: 48px;
+      text-align: center;
+      outline: none;
+    }
+
+    /* ステータス表示 */
+    .status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--surface-card);
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      margin-top: 6px;
+    }
+    .status-text-large {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+    }
 
     /* ===== フッター ===== */
     footer {
-      padding: 8px;
+      padding: 12px;
       font-size: 10px;
       color: var(--text-muted);
-      letter-spacing: 0.06em;
+      text-align: center;
+      width: 100%;
+      background: var(--bg);
     }
-
-    /* 制限角度を制御するCSSカスタムプロパティを初期化 */
-    :root {
-      --limit-angle: 70;
-    }
-
-    /* 制限角度の縦線マーカーにアニメーションと動的配置を適用 */
-    #gauge-limit-line {
-      left: calc((var(--limit-angle) / 180) * 100%);
-      background: var(--warn-color); /* スライダーと連動していることが分かりやすいよう警告色（赤）に変更 */
-      box-shadow: 0 0 4px var(--warn-color);
-      transition: left 0.15s ease-out; /* スライダーを動かしたときに目盛が滑らかに追従 */
-    }
-
   </style>
 </head>
 <body>
 
-<!-- ===== ヘッダー ===== -->
 <header>
   <div class="logo-mark">肩</div>
   <h1>
     肩可動域チェッカー
-    <span>SHOULDER ROM MONITOR — 工業試験場プロトタイプ</span>
+    <span>SHOULDER ROM SIMLATOR</span>
   </h1>
   <div class="status-badge">
     <div class="status-dot" id="pose-status-dot"></div>
@@ -311,78 +313,60 @@
   </div>
 </header>
 
-<!-- ===== メインコンテンツ ===== -->
 <main>
 
-  <!-- カメラ映像 + オーバーレイ -->
   <div class="camera-wrapper">
-    <!-- MediaPipe に渡す入力映像（非表示） -->
     <video id="input-video" playsinline></video>
-    <!-- 骨格・角度を描画するキャンバス -->
     <canvas id="output-canvas"></canvas>
-    <!-- 可動域超過時の赤オーバーレイ -->
     <div id="alert-overlay"></div>
-    <!-- 超過アラートバナー -->
     <div class="alert-banner" id="alert-banner">⚠ 可動域制限を超過しています</div>
-    <!-- ローディング表示 -->
     <div id="loading-msg">
       <div class="spinner"></div>
       <span>カメラ・姿勢推定を起動中...</span>
     </div>
   </div>
 
-  <!-- 数値メトリクス -->
-  <div class="metrics-row">
+  <div class="panel-vertical">
+    
     <div class="metric-card">
-      <div class="label">現在の挙上角度</div>
-      <div style="display: flex; justify-content: center; gap: 24px; margin-top: 4px;">
-        <div>
-          <span style="font-size: 12px; color: var(--text-muted); display: block;">左腕</span>
-          <span class="value" id="angle-display-left" style="font-size: 32px;">---</span>
+      <div class="card-header">
+        <span class="label">現在の挙上角度</span>
+        <span class="unit">度 (°)</span>
+      </div>
+      <div class="angle-monitor-wrap">
+        <div class="angle-pane">
+          <div class="pane-label">左腕</div>
+          <div class="value" id="angle-display-left">---</div>
         </div>
-        <div style="border-left: 1px solid var(--border); height: 40px; align-self: center;"></div>
-        <div>
-          <span style="font-size: 12px; color: var(--text-muted); display: block;">右腕</span>
-          <span class="value" id="angle-display-right" style="font-size: 32px;">---</span>
+        <div class="angle-pane">
+          <div class="pane-label">右腕</div>
+          <div class="value" id="angle-display-right">---</div>
         </div>
       </div>
-      <div class="unit">度 (°)</div>
     </div>
-    <div class="metric-card">
-      <div class="label">制限角度の設定</div>
-      <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px;">
-        <input type="range" id="limit-slider" min="30" max="150" value="70" step="5" style="width: 100px; accent-color: var(--accent);">
-        <input type="number" id="limit-input" min="30" max="150" value="70" step="5" 
-              style="background: transparent; border: none; border-bottom: 2px solid var(--border); color: var(--accent); font-family: var(--font-mono); font-size: 32px; font-weight: 700; width: 70px; text-align: center; outline: none;">
-      </div>
-      <div class="unit">度 (°) [範囲: 30 - 150]</div>
-    </div>
-    <div class="metric-card">
-      <div class="label">ステータス</div>
-      <div class="value" id="status-display" style="font-size:16px; margin-top:4px;">---</div>
-      <div class="unit">&nbsp;</div>
-    </div>
-  </div>
 
-  <!-- ゲージバー -->
-  <div class="gauge-wrap">
-    <div class="gauge-label">
-      <span>0°</span>
-      <span id="gauge-label-limit">制限: 70°</span>
-      <span>180°</span>
+    <div class="metric-card">
+      <div class="card-header">
+        <span class="label">制限角度の設定 [30° - 150°]</span>
+      </div>
+      
+      <div class="control-container">
+        <input type="range" id="limit-slider" class="custom-slider" min="30" max="150" value="70" step="5">
+        <input type="number" id="limit-input" class="limit-num-input" min="30" max="150" value="70" step="5">
+      </div>
+
+      <div class="status-row">
+        <span class="label" style="border: none; margin: 0; padding: 0;">ステータス:</span>
+        <div class="status-text-large" id="status-display">---</div>
+      </div>
     </div>
-    <div class="gauge-track">
-      <!-- 制限角度マーカー（JS で位置を設定） -->
-      <div class="gauge-limit-line" id="gauge-limit-line"></div>
-      <div class="gauge-fill" id="gauge-fill"></div>
-    </div>
+
   </div>
 
 </main>
 
-<footer>MediaPipe Pose — 右肩挙上角度モニタリング MVP v1.0</footer>
+<footer>MediaPipe Pose — 左右肩挙上角度モニタリング MVP v1.5</footer>
 
-<!-- ===== JavaScript ===== -->
 <script src="script.js"></script>
 </body>
 </html>

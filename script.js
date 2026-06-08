@@ -5,21 +5,13 @@
  *
  * 概要:
  * MediaPipe Pose を使いWebカメラ映像からリアルタイムに
- * 右肩の挙上角度を計算・表示し、制限角度超過を
+ * 左右肩の挙上角度を計算・表示し、制限角度超過を
  * 視覚的にフィードバックするプロトタイプ。
  *
  * 外部依存:
  * - @mediapipe/pose         (CDN)
  * - @mediapipe/camera_utils (CDN)
  * - @mediapipe/drawing_utils (CDN)
- *
- * 拡張ポイント:
- * - M5Stack ととの通信 → sendToM5Stack() 関数を追加し、
- * onAngleUpdated() 内から呼び出すことで簡単に連携可能。
- * - 左肩の計測追加 → LANDMARK_INDICES を変更し
- * calculateAngle() を再利用するだけで対応できる。
- * - 記録・ログ機能 → onAngleUpdated() でデータを配列に
- * 蓄積し、CSV ダウンロードなどに応用可能。
  * ============================================================
  */
 
@@ -31,9 +23,6 @@
 
 /** 肩挙上角度の制限値 [度]。ユーザーがUIから変更できるように let に変更 */
 let LIMIT_ANGLE_DEG = 70;
-
-/** ゲージの角度スケール上限 [度] */
-const GAUGE_MAX_ANGLE_DEG = 180;
 
 /** キャンバスに描画する骨格線の色 */
 const SKELETON_COLOR_NORMAL  = '#00d4ff'; // 通常時：シアン
@@ -63,9 +52,6 @@ const statusDisplay  = document.getElementById('status-display');
 
 const poseDot        = document.getElementById('pose-status-dot');
 const poseStatusText = document.getElementById('pose-status-text');
-
-const gaugeFill      = document.getElementById('gauge-fill');
-const gaugeLabelLimit = document.getElementById('gauge-label-limit');
 
 // 追加したUIコントロール要素
 const limitSlider     = document.getElementById('limit-slider');
@@ -115,14 +101,6 @@ function setupLimitControl() {
     // 2. 入力フォームの値を同期
     limitSlider.value = newLimit;
     limitInput.value  = newLimit;
-
-    // 3. ゲージのテキストラベルを更新
-    if (gaugeLabelLimit) {
-      gaugeLabelLimit.textContent = `制限: ${newLimit}°`;
-    }
-
-    // 4. CSS変数を書き換えて、ゲージ上の赤ライン（#gauge-limit-line）を滑らかに動かす
-    document.documentElement.style.setProperty('--limit-angle', newLimit);
   }
 
   // スライダー変更イベント（操作中にリアルタイム反映）
@@ -247,13 +225,11 @@ function onPoseResults(results) {
    8. ランドマーク座標の抽出（両腕対応・上半身特化版）
 ============================================================ */
 function extractTargetLandmarks(landmarks) {
-  // LEFT_SHOULDER(11), RIGHT_SHOULDER(12), LEFT_ELBOW(13), RIGHT_ELBOW(14) を使用
   const leftShoulder  = landmarks[11]; 
   const rightShoulder = landmarks[12]; 
   const leftElbow     = landmarks[13];
   const rightElbow    = landmarks[14]; 
 
-  // 両肩、両肘すべてが信頼度50%以上で映っていることを条件とする
   const VISIBILITY_THRESHOLD = 0.5;
   if (
     leftShoulder.visibility  < VISIBILITY_THRESHOLD ||
@@ -284,11 +260,8 @@ function calculateShoulderAngle({ leftShoulder, rightShoulder, leftElbow, rightE
   const elbow   = (side === 'left') ? leftElbow   : rightElbow;
   const shoulder = (side === 'left') ? leftShoulder : rightShoulder;
 
-  // ✅ 基準軸：画面の「真下」を向く固定ベクトル
-  //    カメラ座標系では Y が下方向なので (0, 1) が「重力方向」に相当する
   const vecA = { x: 0, y: 1 };
 
-  // 肩 → 肘 へのベクトル
   const vecB = {
     x: elbow.x - shoulder.x,
     y: elbow.y - shoulder.y,
@@ -299,11 +272,9 @@ function calculateShoulderAngle({ leftShoulder, rightShoulder, leftElbow, rightE
 
   if (magB === 0) return 0;
 
-  // vecA の大きさは常に 1 なので magA の計算不要
   const cosTheta = Math.max(-1, Math.min(1, dot / magB));
   const angleDeg = (Math.acos(cosTheta) * 180) / Math.PI;
 
-  // ✅ 補正ロジック不要・クリップのみ
   return Math.max(0, angleDeg);
 }
 
@@ -321,25 +292,21 @@ function drawSkeleton({ leftShoulder, rightShoulder, leftElbow, rightElbow }, is
   ctx.shadowColor = color;
   ctx.shadowBlur  = 8;
 
-  // 両肩を結ぶライン
   ctx.beginPath();
   ctx.moveTo(rightShoulder.x, rightShoulder.y);
   ctx.lineTo(leftShoulder.x, leftShoulder.y);
   ctx.stroke();
 
-  // 右腕のライン（右肩 ↔ 右肘）
   ctx.beginPath();
   ctx.moveTo(rightShoulder.x, rightShoulder.y);
   ctx.lineTo(rightElbow.x, rightElbow.y);
   ctx.stroke();
 
-  // 左腕のライン（左肩 ↔ 左肘）
   ctx.beginPath();
   ctx.moveTo(leftShoulder.x, leftShoulder.y);
   ctx.lineTo(leftElbow.x, leftElbow.y);
   ctx.stroke();
 
-  // ランドマークの点を描画
   const points = [leftShoulder, rightShoulder, leftElbow, rightElbow];
   points.forEach((p) => {
     ctx.beginPath();
@@ -360,7 +327,6 @@ function drawAngleOnCanvas(shoulderPos, angleDeg, isOver, side = 'right') {
   ctx.fillStyle    = color;
   ctx.shadowColor  = color;
   ctx.shadowBlur   = 10;
-  // 左肩の場合はテキストを右詰めに、右肩の場合は左詰めに調整して重なりを防ぐ
   ctx.textAlign    = (side === 'left') ? 'right' : 'left';
   ctx.textBaseline = 'bottom';
 
@@ -380,29 +346,34 @@ function onAngleUpdated(angleLeft, angleRight) {
     statusDisplay.textContent = '検出中...';
     statusDisplay.style.color = 'var(--text-muted)';
     setWarningUI(false);
-    updateGauge(0, false);
     return;
   }
 
-  // 左右どちらか高い方の角度を基準に判定
   const maxAngle = Math.max(angleLeft, angleRight);
   const isOver = maxAngle > LIMIT_ANGLE_DEG;
 
-  // 数値表示の更新
+  // 数値表示の更新および制限超過時の個別カラー変更
   if (angleDisplayLeft) {
     angleDisplayLeft.textContent = Math.round(angleLeft);
-    angleDisplayLeft.style.color = (angleLeft > LIMIT_ANGLE_DEG) ? 'var(--warn-color)' : 'var(--text-primary)';
+    if (angleLeft > LIMIT_ANGLE_DEG) {
+      angleDisplayLeft.classList.add('over');
+    } else {
+      angleDisplayLeft.classList.remove('over');
+    }
   }
   if (angleDisplayRight) {
     angleDisplayRight.textContent = Math.round(angleRight);
-    angleDisplayRight.style.color = (angleRight > LIMIT_ANGLE_DEG) ? 'var(--warn-color)' : 'var(--text-primary)';
+    if (angleRight > LIMIT_ANGLE_DEG) {
+      angleDisplayRight.classList.add('over');
+    } else {
+      angleDisplayRight.classList.remove('over');
+    }
   }
 
   statusDisplay.textContent = isOver ? '超過' : '正常';
   statusDisplay.style.color = isOver ? 'var(--warn-color)' : 'var(--ok-color)';
 
   setWarningUI(isOver);
-  updateGauge(maxAngle, isOver);
 }
 
 
@@ -418,23 +389,6 @@ function onAngleUpdated(angleLeft, angleRight) {
 function setWarningUI(isOver) {
   alertOverlay.classList.toggle('active', isOver);
   alertBanner.classList.toggle('active', isOver);
-}
-
-
-/* ============================================================
-   13. ゲージバーの更新
-============================================================ */
-
-/**
- * 角度に応じてゲージバーの幅と色を更新する。
- *
- * @param {number}  angleDeg - 現在の角度 [度]
- * @param {boolean} isOver   - 制限超過フラグ
- */
-function updateGauge(angleDeg, isOver) {
-  const percent = Math.min((angleDeg / GAUGE_MAX_ANGLE_DEG) * 100, 100);
-  gaugeFill.style.width = `${percent}%`;
-  gaugeFill.classList.toggle('over', isOver);
 }
 
 
