@@ -280,6 +280,20 @@
       color: var(--text-muted);
       letter-spacing: 0.06em;
     }
+
+    /* 制限角度を制御するCSSカスタムプロパティを初期化 */
+    :root {
+      --limit-angle: 70;
+    }
+
+    /* 制限角度の縦線マーカーにアニメーションと動的配置を適用 */
+    #gauge-limit-line {
+      left: calc((var(--limit-angle) / 180) * 100%);
+      background: var(--warn-color); /* スライダーと連動していることが分かりやすいよう警告色（赤）に変更 */
+      box-shadow: 0 0 4px var(--warn-color);
+      transition: left 0.15s ease-out; /* スライダーを動かしたときに目盛が滑らかに追従 */
+    }
+    
   </style>
 </head>
 <body>
