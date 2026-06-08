@@ -277,45 +277,34 @@ function extractTargetLandmarks(landmarks) {
 }
 
 /* ============================================================
-   9. 肩挙上角度の計算（垂直基準軸・左右汎用版）
+   9. 肩挙上角度の計算（垂直基準軸・下限リミッター付き左右汎用版）
 ============================================================ */
 function calculateShoulderAngle({ leftShoulder, rightShoulder, leftElbow, rightElbow }, side = 'right') {
-  const shoulderVec = {
-    x: leftShoulder.x - rightShoulder.x,
-    y: leftShoulder.y - rightShoulder.y,
-  };
 
-  // 両肩に対して垂直な真下の基準軸を生成
-  const vecA = {
-    x: -shoulderVec.y,
-    y: shoulderVec.x
-  };
-
-  // 指定された側の肘の座標をセット
-  const elbow = (side === 'left') ? leftElbow : rightElbow;
+  const elbow   = (side === 'left') ? leftElbow   : rightElbow;
   const shoulder = (side === 'left') ? leftShoulder : rightShoulder;
 
-  // 肩から肘へのベクトル
+  // ✅ 基準軸：画面の「真下」を向く固定ベクトル
+  //    カメラ座標系では Y が下方向なので (0, 1) が「重力方向」に相当する
+  const vecA = { x: 0, y: 1 };
+
+  // 肩 → 肘 へのベクトル
   const vecB = {
     x: elbow.x - shoulder.x,
     y: elbow.y - shoulder.y,
   };
 
-  const dot = vecA.x * vecB.x + vecA.y * vecB.y;
-  const magA = Math.hypot(vecA.x, vecA.y);
+  const dot  = vecA.x * vecB.x + vecA.y * vecB.y;
   const magB = Math.hypot(vecB.x, vecB.y);
 
-  if (magA === 0 || magB === 0) return 0;
+  if (magB === 0) return 0;
 
-  const cosTheta = Math.max(-1, Math.min(1, dot / (magA * magB)));
-  let angleDeg = (Math.acos(cosTheta) * 180) / Math.PI;
+  // vecA の大きさは常に 1 なので magA の計算不要
+  const cosTheta = Math.max(-1, Math.min(1, dot / magB));
+  const angleDeg = (Math.acos(cosTheta) * 180) / Math.PI;
 
-  // 肘が肩より上の場合、90度〜180度の挙動へ補正
-  if (elbow.y < shoulder.y) {
-    angleDeg = 180 - angleDeg;
-  }
-
-  return angleDeg;
+  // ✅ 補正ロジック不要・クリップのみ
+  return Math.max(0, angleDeg);
 }
 
 
