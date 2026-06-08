@@ -57,7 +57,8 @@ const alertOverlay   = document.getElementById('alert-overlay');
 const alertBanner    = document.getElementById('alert-banner');
 const loadingMsg     = document.getElementById('loading-msg');
 
-const angleDisplay   = document.getElementById('angle-display');
+const angleDisplayLeft  = document.getElementById('angle-display-left');
+const angleDisplayRight = document.getElementById('angle-display-right');
 const statusDisplay  = document.getElementById('status-display');
 
 const poseDot        = document.getElementById('pose-status-dot');
@@ -199,7 +200,7 @@ function startCamera(videoElement, poseInstance) {
 
 
 /* ============================================================
-   7. MediaPipe Pose 結果コールバック（上半身モード完全対応版）
+   7. MediaPipe Pose 結果コールバック（両腕対応版）
 ============================================================ */
 function onPoseResults(results) {
   syncCanvasSize(results.image);
@@ -213,43 +214,51 @@ function onPoseResults(results) {
   if (results.poseLandmarks && results.poseLandmarks.length > 0) {
     hideLoadingMessage();
 
-    // 必要な3点（左肩・右肩・右肘）を抽出
     const landmarks = extractTargetLandmarks(results.poseLandmarks);
 
     if (landmarks) {
-      // 肩の挙上角度を計算（垂直基準軸）
-      const angleDeg = calculateShoulderAngle(landmarks);
+      // 左右それぞれの角度を計算
+      const angleLeft  = calculateShoulderAngle(landmarks, 'left');
+      const angleRight = calculateShoulderAngle(landmarks, 'right');
 
-      const isOver = angleDeg > LIMIT_ANGLE_DEG;
+      // どちらか一方でも制限値を超えていたら警告対象とする
+      const maxAngle = Math.max(angleLeft, angleRight);
+      const isOver = maxAngle > LIMIT_ANGLE_DEG;
+
+      // 骨格と各角度を画面に描画
       drawSkeleton(landmarks, isOver);
-      drawAngleOnCanvas(landmarks.rightShoulder, angleDeg, isOver);
+      drawAngleOnCanvas(landmarks.leftShoulder, angleLeft, angleLeft > LIMIT_ANGLE_DEG, 'left');
+      drawAngleOnCanvas(landmarks.rightShoulder, angleRight, angleRight > LIMIT_ANGLE_DEG, 'right');
 
-      onAngleUpdated(angleDeg);
+      onAngleUpdated(angleLeft, angleRight);
     } else {
       updateStatusUI('searching');
-      onAngleUpdated(null);
+      onAngleUpdated(null, null);
     }
 
     updateStatusUI('active');
   } else {
     updateStatusUI('searching');
-    onAngleUpdated(null);
+    onAngleUpdated(null, null);
   }
 }
 
-
 /* ============================================================
-   8. ランドマーク座標の抽出（上半身特化・両肩基準版）
+   8. ランドマーク座標の抽出（両腕対応・上半身特化版）
 ============================================================ */
 function extractTargetLandmarks(landmarks) {
+  // LEFT_SHOULDER(11), RIGHT_SHOULDER(12), LEFT_ELBOW(13), RIGHT_ELBOW(14) を使用
   const leftShoulder  = landmarks[11]; 
   const rightShoulder = landmarks[12]; 
+  const leftElbow     = landmarks[13];
   const rightElbow    = landmarks[14]; 
 
+  // 両肩、両肘すべてが信頼度50%以上で映っていることを条件とする
   const VISIBILITY_THRESHOLD = 0.5;
   if (
     leftShoulder.visibility  < VISIBILITY_THRESHOLD ||
     rightShoulder.visibility < VISIBILITY_THRESHOLD ||
+    leftElbow.visibility     < VISIBILITY_THRESHOLD ||
     rightElbow.visibility    < VISIBILITY_THRESHOLD
   ) {
     return null;
@@ -262,15 +271,15 @@ function extractTargetLandmarks(landmarks) {
   return {
     leftShoulder:  { x: flip(leftShoulder.x),  y: leftShoulder.y * h_ },
     rightShoulder: { x: flip(rightShoulder.x), y: rightShoulder.y * h_ },
+    leftElbow:     { x: flip(leftElbow.x),     y: leftElbow.y * h_ },
     rightElbow:    { x: flip(rightElbow.x),    y: rightElbow.y * h_ },
   };
 }
 
-
 /* ============================================================
-   9. 肩挙上角度の計算（垂直基準軸・Tポーズ＝90度版）
+   9. 肩挙上角度の計算（垂直基準軸・左右汎用版）
 ============================================================ */
-function calculateShoulderAngle({ leftShoulder, rightShoulder, rightElbow }) {
+function calculateShoulderAngle({ leftShoulder, rightShoulder, leftElbow, rightElbow }, side = 'right') {
   const shoulderVec = {
     x: leftShoulder.x - rightShoulder.x,
     y: leftShoulder.y - rightShoulder.y,
@@ -282,10 +291,14 @@ function calculateShoulderAngle({ leftShoulder, rightShoulder, rightElbow }) {
     y: shoulderVec.x
   };
 
-  // 右肩から右肘へのベクトル
+  // 指定された側の肘の座標をセット
+  const elbow = (side === 'left') ? leftElbow : rightElbow;
+  const shoulder = (side === 'left') ? leftShoulder : rightShoulder;
+
+  // 肩から肘へのベクトル
   const vecB = {
-    x: rightElbow.x - rightShoulder.x,
-    y: rightElbow.y - rightShoulder.y,
+    x: elbow.x - shoulder.x,
+    y: elbow.y - shoulder.y,
   };
 
   const dot = vecA.x * vecB.x + vecA.y * vecB.y;
@@ -298,7 +311,7 @@ function calculateShoulderAngle({ leftShoulder, rightShoulder, rightElbow }) {
   let angleDeg = (Math.acos(cosTheta) * 180) / Math.PI;
 
   // 肘が肩より上の場合、90度〜180度の挙動へ補正
-  if (rightElbow.y < rightShoulder.y) {
+  if (elbow.y < shoulder.y) {
     angleDeg = 180 - angleDeg;
   }
 
@@ -307,16 +320,9 @@ function calculateShoulderAngle({ leftShoulder, rightShoulder, rightElbow }) {
 
 
 /* ============================================================
-   10. キャンバスへの描画
+   10. キャンバスへの描画（両腕対応版）
 ============================================================ */
-
-/**
- * 肩・肘の骨格ラインとランドマーク点をキャンバスに描画する。
- *
- * @param {{ leftShoulder, rightShoulder, rightElbow }} landmarks - ピクセル座標
- * @param {boolean} isOver - 制限超過フラグ
- */
-function drawSkeleton({ leftShoulder, rightShoulder, rightElbow }, isOver) {
+function drawSkeleton({ leftShoulder, rightShoulder, leftElbow, rightElbow }, isOver) {
   const color = isOver ? SKELETON_COLOR_WARNING : SKELETON_COLOR_NORMAL;
   ctx.save();
 
@@ -326,17 +332,26 @@ function drawSkeleton({ leftShoulder, rightShoulder, rightElbow }, isOver) {
   ctx.shadowColor = color;
   ctx.shadowBlur  = 8;
 
+  // 両肩を結ぶライン
   ctx.beginPath();
   ctx.moveTo(rightShoulder.x, rightShoulder.y);
   ctx.lineTo(leftShoulder.x, leftShoulder.y);
   ctx.stroke();
 
+  // 右腕のライン（右肩 ↔ 右肘）
   ctx.beginPath();
   ctx.moveTo(rightShoulder.x, rightShoulder.y);
   ctx.lineTo(rightElbow.x, rightElbow.y);
   ctx.stroke();
 
-  const points = [leftShoulder, rightShoulder, rightElbow];
+  // 左腕のライン（左肩 ↔ 左肘）
+  ctx.beginPath();
+  ctx.moveTo(leftShoulder.x, leftShoulder.y);
+  ctx.lineTo(leftElbow.x, leftElbow.y);
+  ctx.stroke();
+
+  // ランドマークの点を描画
+  const points = [leftShoulder, rightShoulder, leftElbow, rightElbow];
   points.forEach((p) => {
     ctx.beginPath();
     ctx.arc(p.x, p.y, LANDMARK_RADIUS, 0, Math.PI * 2);
@@ -347,14 +362,7 @@ function drawSkeleton({ leftShoulder, rightShoulder, rightElbow }, isOver) {
   ctx.restore();
 }
 
-/**
- * 肩座標の近くに角度数値をキャンバスに描画する。
- *
- * @param {{ x, y }} shoulderPos - 肩のピクセル座標
- * @param {number}  angleDeg    - 表示する角度 [度]
- * @param {boolean} isOver      - 制限超過フラグ
- */
-function drawAngleOnCanvas(shoulderPos, angleDeg, isOver) {
+function drawAngleOnCanvas(shoulderPos, angleDeg, isOver, side = 'right') {
   const text  = `${Math.round(angleDeg)}°`;
   const color = isOver ? '#ff6b6b' : '#00d4ff';
 
@@ -363,31 +371,23 @@ function drawAngleOnCanvas(shoulderPos, angleDeg, isOver) {
   ctx.fillStyle    = color;
   ctx.shadowColor  = color;
   ctx.shadowBlur   = 10;
-  ctx.textAlign    = 'left';
+  // 左肩の場合はテキストを右詰めに、右肩の場合は左詰めに調整して重なりを防ぐ
+  ctx.textAlign    = (side === 'left') ? 'right' : 'left';
   ctx.textBaseline = 'bottom';
 
-  const offsetX = 14;
+  const offsetX = (side === 'left') ? -14 : 14;
   const offsetY = -12;
   ctx.fillText(text, shoulderPos.x + offsetX, shoulderPos.y + offsetY);
   ctx.restore();
 }
 
-
 /* ============================================================
-   11. 角度更新時のUI処理
+   11. 角度更新時のUI処理（両腕対応版）
 ============================================================ */
-
-/**
- * 角度が更新されるたびに呼ばれる。
- * UI の更新・警告表示・外部連携の起点となる関数。
- *
- * @param {number | null} angleDeg - 計算された角度 [度]。
- * ランドマーク未検出の場合は null。
- */
-function onAngleUpdated(angleDeg) {
-  if (angleDeg === null) {
-    angleDisplay.textContent = '---';
-    angleDisplay.classList.remove('over');
+function onAngleUpdated(angleLeft, angleRight) {
+  if (angleLeft === null || angleRight === null) {
+    if (angleDisplayLeft)  angleDisplayLeft.textContent = '---';
+    if (angleDisplayRight) angleDisplayRight.textContent = '---';
     statusDisplay.textContent = '検出中...';
     statusDisplay.style.color = 'var(--text-muted)';
     setWarningUI(false);
@@ -395,17 +395,25 @@ function onAngleUpdated(angleDeg) {
     return;
   }
 
-  const isOver = angleDeg > LIMIT_ANGLE_DEG;
-  const rounded = Math.round(angleDeg);
+  // 左右どちらか高い方の角度を基準に判定
+  const maxAngle = Math.max(angleLeft, angleRight);
+  const isOver = maxAngle > LIMIT_ANGLE_DEG;
 
-  angleDisplay.textContent = rounded;
-  angleDisplay.classList.toggle('over', isOver);
+  // 数値表示の更新
+  if (angleDisplayLeft) {
+    angleDisplayLeft.textContent = Math.round(angleLeft);
+    angleDisplayLeft.style.color = (angleLeft > LIMIT_ANGLE_DEG) ? 'var(--warn-color)' : 'var(--text-primary)';
+  }
+  if (angleDisplayRight) {
+    angleDisplayRight.textContent = Math.round(angleRight);
+    angleDisplayRight.style.color = (angleRight > LIMIT_ANGLE_DEG) ? 'var(--warn-color)' : 'var(--text-primary)';
+  }
 
   statusDisplay.textContent = isOver ? '超過' : '正常';
   statusDisplay.style.color = isOver ? 'var(--warn-color)' : 'var(--ok-color)';
 
   setWarningUI(isOver);
-  updateGauge(angleDeg, isOver);
+  updateGauge(maxAngle, isOver);
 }
 
 

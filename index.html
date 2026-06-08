@@ -293,7 +293,7 @@
       box-shadow: 0 0 4px var(--warn-color);
       transition: left 0.15s ease-out; /* スライダーを動かしたときに目盛が滑らかに追従 */
     }
-    
+
   </style>
 </head>
 <body>
@@ -335,7 +335,17 @@
   <div class="metrics-row">
     <div class="metric-card">
       <div class="label">現在の挙上角度</div>
-      <div class="value" id="angle-display">---</div>
+      <div style="display: flex; justify-content: center; gap: 24px; margin-top: 4px;">
+        <div>
+          <span style="font-size: 12px; color: var(--text-muted); display: block;">左腕</span>
+          <span class="value" id="angle-display-left" style="font-size: 32px;">---</span>
+        </div>
+        <div style="border-left: 1px solid var(--border); height: 40px; align-self: center;"></div>
+        <div>
+          <span style="font-size: 12px; color: var(--text-muted); display: block;">右腕</span>
+          <span class="value" id="angle-display-right" style="font-size: 32px;">---</span>
+        </div>
+      </div>
       <div class="unit">度 (°)</div>
     </div>
     <div class="metric-card">
