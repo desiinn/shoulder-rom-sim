@@ -30,7 +30,7 @@
 ============================================================ */
 
 /** 肩挙上角度の制限値 [度]。この値を超えると警告を出す。 */
-const LIMIT_ANGLE_DEG = 70;
+let LIMIT_ANGLE_DEG = 70;
 
 /**
  * MediaPipe Pose のランドマーク番号定義
@@ -119,8 +119,8 @@ document.addEventListener('DOMContentLoaded', initApp);
 function setupMediaPipePose() {
   const pose = new Pose({
     locateFile: (file) => {
-      // CDN から WASM ファイル等を取得するパスを指定
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+      // ファイル名（.wasm や .data など）に応じて、CDNの正しい正確なパスを返すように修正
+      return `https://cdn.jsdelivr.net/npm/@mediapipe/pose@0.5.1675469404/${file}`;
     },
   });
 
@@ -137,7 +137,6 @@ function setupMediaPipePose() {
 
   return pose;
 }
-
 
 /* ============================================================
    5. カメラ起動
@@ -170,22 +169,15 @@ function startCamera(videoElement, poseInstance) {
 
 
 /* ============================================================
-   6. MediaPipe Pose 結果コールバック
+   6. MediaPipe Pose 結果コールバック（上半身モード完全対応版）
 ============================================================ */
-
-/**
- * MediaPipe Pose が各フレームの推定結果を返すたびに呼ばれる関数。
- * キャンバスへの描画と角度計算を行う。
- *
- * @param {Object} results - MediaPipe Pose の結果オブジェクト
- */
 function onPoseResults(results) {
-  // キャンバスサイズをビデオに合わせる（初回のみ実質的に変化）
+  // キャンバスサイズをビデオに合わせる
   syncCanvasSize(results.image);
 
   // キャンバスをクリアして映像フレームを描画
   ctx.save();
-  // カメラ映像を左右反転（インカメラは鏡として自然に見えるよう反転）
+  // カメラ映像を左右反転
   ctx.translate(canvasEl.width, 0);
   ctx.scale(-1, 1);
   ctx.drawImage(results.image, 0, 0, canvasEl.width, canvasEl.height);
@@ -196,20 +188,27 @@ function onPoseResults(results) {
     // ローディング表示を非表示にする
     hideLoadingMessage();
 
-    // 必要な3点のランドマーク座標を取得
+    // 必要な3点のランドマーク座標（左肩・右肩・右肘）を取得
     const landmarks = extractTargetLandmarks(results.poseLandmarks);
 
+    // ★修正ポイント：landmarks が正しく取得できた（nullではない）場合のみ描画と計算を行う
     if (landmarks) {
-      // 肩の挙上角度を計算
+      // 肩の挙上角度を計算（両肩基準）
       const angleDeg = calculateShoulderAngle(landmarks);
 
       // 骨格ラインと角度を描画
       const isOver = angleDeg > LIMIT_ANGLE_DEG;
       drawSkeleton(landmarks, isOver);
-      drawAngleOnCanvas(landmarks.shoulder, angleDeg, isOver);
+      
+      // ★修正ポイント：landmarks.shoulder から landmarks.rightShoulder に変更
+      drawAngleOnCanvas(landmarks.rightShoulder, angleDeg, isOver);
 
       // UI を更新
       onAngleUpdated(angleDeg);
+    } else {
+      // 画面内に肩や肘が正しく映っていない場合、UIを一瞬リセットする
+      updateStatusUI('searching');
+      onAngleUpdated(null);
     }
 
     // ポーズ検出中のステータスを表示
@@ -223,94 +222,76 @@ function onPoseResults(results) {
 
 
 /* ============================================================
-   7. ランドマーク座標の抽出
+   7. ランドマーク座標の抽出（上半身特化・両肩基準版）
 ============================================================ */
-
-/**
- * MediaPipe のランドマーク配列から必要な3点の座標を取り出し、
- * ピクセル座標に変換して返す。
- *
- * @param {Array} landmarks - MediaPipe の poseLandmarks 配列
- * @returns {{ shoulder, elbow, hip } | null}
- *   各座標オブジェクト {x, y}（ピクセル値）。
- *   信頼度が低い場合は null を返す。
- */
 function extractTargetLandmarks(landmarks) {
-  const s = landmarks[LANDMARK_INDICES.RIGHT_SHOULDER];
-  const e = landmarks[LANDMARK_INDICES.RIGHT_ELBOW];
-  const h = landmarks[LANDMARK_INDICES.RIGHT_HIP];
+  // LEFT_SHOULDER(11), RIGHT_SHOULDER(12), RIGHT_ELBOW(14) を使用
+  const leftShoulder  = landmarks[11]; 
+  const rightShoulder = landmarks[12]; 
+  const rightElbow    = landmarks[14]; 
 
-  // 可視性スコアが低いランドマークは信頼性がないためスキップ
+  // 可視性スコアのチェック（腰を除外し、両肩と右肘のみを必須とする）
   const VISIBILITY_THRESHOLD = 0.5;
   if (
-    s.visibility < VISIBILITY_THRESHOLD ||
-    e.visibility < VISIBILITY_THRESHOLD ||
-    h.visibility < VISIBILITY_THRESHOLD
+    leftShoulder.visibility  < VISIBILITY_THRESHOLD ||
+    rightShoulder.visibility < VISIBILITY_THRESHOLD ||
+    rightElbow.visibility    < VISIBILITY_THRESHOLD
   ) {
     return null;
   }
 
-  // MediaPipe の座標は 0〜1 に正規化されているのでピクセルに変換
-  // ※ 映像を左右反転して表示しているため、x 座標も反転する
   const w = canvasEl.width;
   const h_ = canvasEl.height;
   const flip = (x) => (1 - x) * w; // 左右反転
 
   return {
-    shoulder: { x: flip(s.x), y: s.y * h_ },
-    elbow:    { x: flip(e.x), y: e.y * h_ },
-    hip:      { x: flip(h.x), y: h.y * h_ },
+    leftShoulder:  { x: flip(leftShoulder.x),  y: leftShoulder.y * h_ },
+    rightShoulder: { x: flip(rightShoulder.x), y: rightShoulder.y * h_ },
+    rightElbow:    { x: flip(rightElbow.x),    y: rightElbow.y * h_ },
   };
 }
 
-
 /* ============================================================
-   8. 肩挙上角度の計算
+   8. 肩挙上角度の計算（垂直基準軸・Tポーズ＝90度版）
 ============================================================ */
+function calculateShoulderAngle({ leftShoulder, rightShoulder, rightElbow }) {
+  // 1. 体の傾きを計算するため、両肩を結ぶベクトルを作る
+  const shoulderVec = {
+    x: leftShoulder.x - rightShoulder.x,
+    y: leftShoulder.y - rightShoulder.y,
+  };
 
-/**
- * 右肩の挙上角度を計算する。
- *
- * 定義:
- *   ・ベクトルA = 腰 → 肩（体幹の基準軸）
- *   ・ベクトルB = 肩 → 肘（上腕の向き）
- *   ・2つのベクトルのなす角 = 肩の挙上角度
- *
- * 計算式:
- *   cos θ = (A · B) / (|A| × |B|)
- *   θ = arccos(cos θ) → 度に変換
- *
- * @param {{ shoulder, elbow, hip }} landmarks - ピクセル座標
- * @returns {number} 挙上角度 [度] (0〜180)
- */
-function calculateShoulderAngle({ shoulder, elbow, hip }) {
-  // ベクトルA：腰から肩へ
+  // 2. 両肩ベクトルに対して「垂直に真下を向く」基準ベクトルを作る（重力方向の軸）
+  // 画面座標系（下が Y+）において、横ベクトル (x, y) に垂直な下向きベクトルは (-y, x) となる
   const vecA = {
-    x: shoulder.x - hip.x,
-    y: shoulder.y - hip.y,
+    x: -shoulderVec.y,
+    y: shoulderVec.x
   };
 
-  // ベクトルB：肩から肘へ
+  // 3. 右肩から右肘へのベクトル（上腕の向き）
   const vecB = {
-    x: elbow.x - shoulder.x,
-    y: elbow.y - shoulder.y,
+    x: rightElbow.x - rightShoulder.x,
+    y: rightElbow.y - rightShoulder.y,
   };
 
-  // 内積
+  // 内積の計算
   const dot = vecA.x * vecB.x + vecA.y * vecB.y;
 
   // ベクトルの大きさ
   const magA = Math.hypot(vecA.x, vecA.y);
   const magB = Math.hypot(vecB.x, vecB.y);
 
-  // 0 除算防止
   if (magA === 0 || magB === 0) return 0;
 
-  // arccos の引数を [-1, 1] にクランプして数値誤差対策
   const cosTheta = Math.max(-1, Math.min(1, dot / (magA * magB)));
+  let angleDeg = (Math.acos(cosTheta) * 180) / Math.PI;
 
-  // ラジアンから度へ変換
-  const angleDeg = (Math.acos(cosTheta) * 180) / Math.PI;
+  // 4. 肘が肩より上にあるか下にあるかで、180度までの挙動を補正
+  // 肘が肩より上の場合、角度が90度を超えて上がっていくように処理
+  if (rightElbow.y < rightShoulder.y) {
+    // 垂直軸とのなす角（減少していく値）を、90度〜180度の増加値に変換
+    angleDeg = 180 - angleDeg;
+  }
 
   return angleDeg;
 }
@@ -326,42 +307,34 @@ function calculateShoulderAngle({ shoulder, elbow, hip }) {
  * @param {{ shoulder, elbow, hip }} landmarks - ピクセル座標
  * @param {boolean} isOver - 制限超過フラグ
  */
-function drawSkeleton({ shoulder, elbow, hip }, isOver) {
+function drawSkeleton({ leftShoulder, rightShoulder, rightElbow }, isOver) {
   const color = isOver ? SKELETON_COLOR_WARNING : SKELETON_COLOR_NORMAL;
-
   ctx.save();
 
-  // --- 骨格ライン ---
   ctx.strokeStyle = color;
   ctx.lineWidth   = SKELETON_LINE_WIDTH;
   ctx.lineCap     = 'round';
   ctx.shadowColor = color;
   ctx.shadowBlur  = 8;
 
-  // 腰 → 肩
+  // 右肩 ↔ 左肩 のライン
   ctx.beginPath();
-  ctx.moveTo(hip.x, hip.y);
-  ctx.lineTo(shoulder.x, shoulder.y);
+  ctx.moveTo(rightShoulder.x, rightShoulder.y);
+  ctx.lineTo(leftShoulder.x, leftShoulder.y);
   ctx.stroke();
 
-  // 肩 → 肘
+  // 右肩 ↔ 右肘 のライン
   ctx.beginPath();
-  ctx.moveTo(shoulder.x, shoulder.y);
-  ctx.lineTo(elbow.x, elbow.y);
+  ctx.moveTo(rightShoulder.x, rightShoulder.y);
+  ctx.lineTo(rightElbow.x, rightElbow.y);
   ctx.stroke();
 
-  // --- ランドマーク点 ---
-  ctx.shadowBlur = 12;
-  const points = [shoulder, elbow, hip];
+  // ランドマークの点を描画
+  const points = [leftShoulder, rightShoulder, rightElbow];
   points.forEach((p) => {
     ctx.beginPath();
     ctx.arc(p.x, p.y, LANDMARK_RADIUS, 0, Math.PI * 2);
     ctx.fillStyle = color;
-    ctx.fill();
-    // 中心に白点を描いて視認性を上げる
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, LANDMARK_RADIUS * 0.4, 0, Math.PI * 2);
-    ctx.fillStyle = '#fff';
     ctx.fill();
   });
 
@@ -552,6 +525,61 @@ function hideLoadingMessage() {
     loadingMsg.classList.add('hidden');
   }
 }
+
+/* ============================================================
+   【機能追加】UIからの制限角度変更イベントの処理
+============================================================ */
+document.addEventListener('DOMContentLoaded', () => {
+  const limitSlider     = document.getElementById('limit-slider');
+  const limitInput      = document.getElementById('limit-input');
+  const gaugeLabelLimit = document.getElementById('gauge-label-limit');
+  const limitMarker     = document.getElementById('limit-marker');
+
+  /**
+   * 制限角度が変更されたときにシステム全体に反映する共通関数
+   * @param {number} newLimit - 新しい制限角度値
+   */
+  function updateLimitAngle(newLimit) {
+    // 適切な範囲（30〜150度）にクリップ
+    if (newLimit < 30) newLimit = 30;
+    if (newLimit > 150) newLimit = 150;
+
+    // 1. 変数を更新
+    LIMIT_ANGLE_DEG = newLimit;
+
+    // 2. UIの入力値を同期
+    limitSlider.value = newLimit;
+    limitInput.value  = newLimit;
+
+    // 3. 下部のゲージバーのテキスト（制限: XX°）を更新
+    if (gaugeLabelLimit) {
+      gaugeLabelLimit.textContent = `制限: ${newLimit}°`;
+    }
+
+    // 4. 下部のゲージバー上の赤い目盛り位置（％）を動的に計算して更新
+    if (limitMarker) {
+      // 0度〜180度に対する割合
+      const percentage = (newLimit / 180) * 100;
+      limitMarker.style.left = `${percentage}%`;
+    }
+  }
+
+  // スライダーが動かされたときの処理
+  if (limitSlider) {
+    limitSlider.addEventListener('input', (e) => {
+      updateLimitAngle(parseInt(e.target.value, 10));
+    });
+  }
+
+  // 数値入力ボックスが変更されたときの処理
+  if (limitInput) {
+    limitInput.addEventListener('change', (e) => {
+      let val = parseInt(e.target.value, 10);
+      if (isNaN(val)) val = 70; // 不正な入力はデフォルトにリセット
+      updateLimitAngle(val);
+    });
+  }
+});
 
 
 /* ============================================================

@@ -325,9 +325,13 @@
       <div class="unit">度 (°)</div>
     </div>
     <div class="metric-card">
-      <div class="label">制限角度</div>
-      <div class="value" id="limit-display">70</div>
-      <div class="unit">度 (°) — 変更可</div>
+      <div class="label">制限角度の設定</div>
+      <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 4px;">
+        <input type="range" id="limit-slider" min="30" max="150" value="70" step="5" style="width: 100px; accent-color: var(--accent);">
+        <input type="number" id="limit-input" min="30" max="150" value="70" step="5" 
+              style="background: transparent; border: none; border-bottom: 2px solid var(--border); color: var(--accent); font-family: var(--font-mono); font-size: 32px; font-weight: 700; width: 70px; text-align: center; outline: none;">
+      </div>
+      <div class="unit">度 (°) [範囲: 30 - 150]</div>
     </div>
     <div class="metric-card">
       <div class="label">ステータス</div>
