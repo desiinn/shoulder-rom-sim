@@ -13,8 +13,7 @@
  * - @mediapipe/camera_utils (CDN)
  * - @mediapipe/drawing_utils (CDN)
  * - Google Fonts: 'Courier New' (数値表示用)
- * 
- * Copyright 2026 Google LLC.
+ * * Copyright 2026 Google LLC.
     Licensed under the Apache License, Version 2.0 (the "License");
     you may not use this file except in compliance with the License.
     You may obtain a copy of the License at
@@ -48,6 +47,18 @@ const SKELETON_LINE_WIDTH = 3;
 /** ランドマーク円の半径 [px] */
 const LANDMARK_RADIUS = 7;
 
+/** 音声アラートの有効/無効状態（ブラウザ仕様に基づき初期値はfalse） */
+let IS_AUDIO_ENABLED = false;
+
+/** Web Audio API インスタンス保持用 */
+let audioCtx = null;
+
+/** 警告音の発音インターバル管理用 */
+let audioIntervalId = null;
+
+/** 警告音発音中フラグ */
+let isPlayingBeep = false;
+
 
 /* ============================================================
    2. DOM 要素の取得
@@ -62,12 +73,13 @@ const loadingMsg     = document.getElementById('loading-msg');
 
 const angleDisplayLeft  = document.getElementById('angle-display-left');
 const angleDisplayRight = document.getElementById('angle-display-right');
-const statusDisplay  = document.getElementById('status-display');
 
 const poseDot        = document.getElementById('pose-status-dot');
 const poseStatusText = document.getElementById('pose-status-text');
 
-// 追加したUIコントロール要素
+const audioToggle    = document.getElementById('audio-toggle');
+
+// UIコントロール要素
 const limitSlider     = document.getElementById('limit-slider');
 const limitInput      = document.getElementById('limit-input');
 
@@ -83,6 +95,9 @@ const limitInput      = document.getElementById('limit-input');
 function initApp() {
   // 制限角度UIのバインドと初期設定
   setupLimitControl();
+
+  // 音声コントロールのバインドと初期設定
+  setupAudioControl();
 
   // MediaPipe Pose のセットアップ
   const pose = setupMediaPipePose();
@@ -135,14 +150,36 @@ function setupLimitControl() {
 
 
 /* ============================================================
+   4b. 音声コントロールのバインドと初期設定
+============================================================ */
+function setupAudioControl() {
+  if (!audioToggle) return;
+
+  // 初期状態を反映（チェックボックスはオフ）
+  audioToggle.checked = IS_AUDIO_ENABLED;
+
+  audioToggle.addEventListener('change', async (e) => {
+    IS_AUDIO_ENABLED = e.target.checked;
+
+    // ユーザーが有効化した瞬間に AudioContext を生成・再開（ブラウザ制限解除）
+    if (IS_AUDIO_ENABLED) {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === 'suspended') {
+        await audioCtx.resume();
+      }
+    } else {
+      // 無効化された場合は即座に音を止める
+      stopAlertSound();
+    }
+  });
+}
+
+
+/* ============================================================
    5. MediaPipe Pose セットアップ
 ============================================================ */
-
-/**
- * MediaPipe Pose インスタンスを生成・設定して返す。
- *
- * @returns {Pose} 設定済みの Pose インスタンス
- */
 function setupMediaPipePose() {
   const pose = new Pose({
     locateFile: (file) => {
@@ -151,9 +188,9 @@ function setupMediaPipePose() {
   });
 
   pose.setOptions({
-    modelComplexity:   1,       // 0=軽量, 1=標準, 2=高精度
-    smoothLandmarks:   true,    // ランドマークのブレを平滑化
-    enableSegmentation: false,  // セグメンテーション不要なので無効
+    modelComplexity:   1,
+    smoothLandmarks:   true,
+    enableSegmentation: false,
     minDetectionConfidence: 0.5,
     minTrackingConfidence:  0.5,
   });
@@ -166,14 +203,6 @@ function setupMediaPipePose() {
 /* ============================================================
    6. カメラ起動
 ============================================================ */
-
-/**
- * Webカメラを起動し、MediaPipe Camera Utils でフレームを
- * Pose に送り続けるループを開始する。
- *
- * @param {HTMLVideoElement} videoElement - 入力映像要素
- * @param {Pose}             poseInstance - MediaPipe Pose インスタンス
- */
 function startCamera(videoElement, poseInstance) {
   const camera = new Camera(videoElement, {
     onFrame: async () => {
@@ -181,7 +210,7 @@ function startCamera(videoElement, poseInstance) {
     },
     width:  640,
     height: 480,
-    facingMode: 'user', // インカメラを優先
+    facingMode: 'user',
   });
 
   camera.start().catch((err) => {
@@ -209,15 +238,12 @@ function onPoseResults(results) {
     const landmarks = extractTargetLandmarks(results.poseLandmarks);
 
     if (landmarks) {
-      // 左右それぞれの角度を計算
       const angleLeft  = calculateShoulderAngle(landmarks, 'left');
       const angleRight = calculateShoulderAngle(landmarks, 'right');
 
-      // どちらか一方でも制限値を超えていたら警告対象とする
       const maxAngle = Math.max(angleLeft, angleRight);
       const isOver = maxAngle > LIMIT_ANGLE_DEG;
 
-      // 骨格と各角度を画面に描画
       drawSkeleton(landmarks, isOver);
       drawAngleOnCanvas(landmarks.leftShoulder, angleLeft, angleLeft > LIMIT_ANGLE_DEG, 'left');
       drawAngleOnCanvas(landmarks.rightShoulder, angleRight, angleRight > LIMIT_ANGLE_DEG, 'right');
@@ -227,16 +253,15 @@ function onPoseResults(results) {
       updateStatusUI('searching');
       onAngleUpdated(null, null);
     }
-
-    updateStatusUI('active');
   } else {
     updateStatusUI('searching');
     onAngleUpdated(null, null);
   }
 }
 
+
 /* ============================================================
-   8. ランドマーク座標の抽出（両腕対応・上半身特化版）
+   8. ランドマーク座標の抽出
 ============================================================ */
 function extractTargetLandmarks(landmarks) {
   const leftShoulder  = landmarks[11]; 
@@ -266,16 +291,15 @@ function extractTargetLandmarks(landmarks) {
   };
 }
 
+
 /* ============================================================
-   9. 肩挙上角度の計算（垂直基準軸・下限リミッター付き左右汎用版）
+   9. 肩挙上角度の計算
 ============================================================ */
 function calculateShoulderAngle({ leftShoulder, rightShoulder, leftElbow, rightElbow }, side = 'right') {
-
   const elbow   = (side === 'left') ? leftElbow   : rightElbow;
   const shoulder = (side === 'left') ? leftShoulder : rightShoulder;
 
   const vecA = { x: 0, y: 1 };
-
   const vecB = {
     x: elbow.x - shoulder.x,
     y: elbow.y - shoulder.y,
@@ -294,7 +318,7 @@ function calculateShoulderAngle({ leftShoulder, rightShoulder, leftElbow, rightE
 
 
 /* ============================================================
-   10. キャンバスへの描画（両腕対応版）
+   10. キャンバスへの描画
 ============================================================ */
 function drawSkeleton({ leftShoulder, rightShoulder, leftElbow, rightElbow }, isOver) {
   const color = isOver ? SKELETON_COLOR_WARNING : SKELETON_COLOR_NORMAL;
@@ -350,15 +374,14 @@ function drawAngleOnCanvas(shoulderPos, angleDeg, isOver, side = 'right') {
   ctx.restore();
 }
 
+
 /* ============================================================
-   11. 角度更新時のUI処理（両腕対応版）
+   11. 角度更新時のUI処理
 ============================================================ */
 function onAngleUpdated(angleLeft, angleRight) {
   if (angleLeft === null || angleRight === null) {
     if (angleDisplayLeft)  angleDisplayLeft.textContent = '---';
     if (angleDisplayRight) angleDisplayRight.textContent = '---';
-    statusDisplay.textContent = '検出中...';
-    statusDisplay.style.color = 'var(--text-muted)';
     setWarningUI(false);
     return;
   }
@@ -366,7 +389,6 @@ function onAngleUpdated(angleLeft, angleRight) {
   const maxAngle = Math.max(angleLeft, angleRight);
   const isOver = maxAngle > LIMIT_ANGLE_DEG;
 
-  // 数値表示の更新および制限超過時の個別カラー変更
   if (angleDisplayLeft) {
     angleDisplayLeft.textContent = Math.round(angleLeft);
     if (angleLeft > LIMIT_ANGLE_DEG) {
@@ -384,9 +406,8 @@ function onAngleUpdated(angleLeft, angleRight) {
     }
   }
 
-  statusDisplay.textContent = isOver ? '超過' : '正常';
-  statusDisplay.style.color = isOver ? 'var(--warn-color)' : 'var(--ok-color)';
-
+  // 統合されたヘッダー側へ状態を通知
+  updateStatusUI(isOver ? 'over' : 'active');
   setWarningUI(isOver);
 }
 
@@ -394,31 +415,66 @@ function onAngleUpdated(angleLeft, angleRight) {
 /* ============================================================
    12. 警告UI の切り替え
 ============================================================ */
-
-/**
- * 可動域超過時に赤いオーバーレイとバナーを表示する。
- *
- * @param {boolean} isOver - true のとき警告状態にする
- */
 function setWarningUI(isOver) {
   alertOverlay.classList.toggle('active', isOver);
   alertBanner.classList.toggle('active', isOver);
+
+  if (isOver) {
+    startAlertSound();
+  } else {
+    stopAlertSound();
+  }
+}
+
+
+/* ============================================================
+   13. アラート音声制御（Web Audio API）
+============================================================ */
+function startAlertSound() {
+  if (!IS_AUDIO_ENABLED || !audioCtx || isPlayingBeep) return;
+  isPlayingBeep = true;
+
+  audioIntervalId = setInterval(() => {
+    if (!IS_AUDIO_ENABLED || audioCtx.state === 'suspended') return;
+
+    try {
+      const osc = audioCtx.createOscillator();
+      const gainNode = audioCtx.createGain();
+
+      osc.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+
+      osc.type = 'triangle';        // 三角波
+      osc.frequency.setValueAtTime(660, audioCtx.currentTime); // 660Hz
+
+      gainNode.gain.setValueAtTime(0.15, audioCtx.currentTime); 
+      gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15); 
+
+      osc.start(audioCtx.currentTime);
+      osc.stop(audioCtx.currentTime + 0.15);
+    } catch (e) {
+      console.error('[Audio] 発音エラー:', e);
+    }
+  }, 400);
+}
+
+function stopAlertSound() {
+  isPlayingBeep = false;
+  if (audioIntervalId) {
+    clearInterval(audioIntervalId);
+    audioIntervalId = null;
+  }
 }
 
 
 /* ============================================================
    14. ステータスバッジの更新
 ============================================================ */
-
-/**
- * ヘッダーのステータス表示を更新する。
- *
- * @param {'active' | 'searching' | 'error'} state - 状態文字列
- */
 function updateStatusUI(state) {
   const configs = {
+    over:      { dot: 'warn',   text: '制限超過' },
     active:    { dot: 'active', text: '姿勢検出中' },
-    searching: { dot: '',       text: '人物を探しています...' },
+    searching: { dot: '',       text: '人物探索中' },
     error:     { dot: 'warn',   text: 'カメラエラー' },
   };
   const cfg = configs[state] || configs.searching;
@@ -431,12 +487,6 @@ function updateStatusUI(state) {
 /* ============================================================
    15. ユーティリティ関数
 ============================================================ */
-
-/**
- * キャンバスのサイズを描画する映像に合わせて同期する。
- *
- * @param {HTMLVideoElement | HTMLImageElement} image - 映像ソース
- */
 function syncCanvasSize(image) {
   if (
     canvasEl.width  !== image.width ||
@@ -447,9 +497,6 @@ function syncCanvasSize(image) {
   }
 }
 
-/**
- * ローディングメッセージを非表示にする。
- */
 function hideLoadingMessage() {
   if (!loadingMsg.classList.contains('hidden')) {
     loadingMsg.classList.add('hidden');
@@ -460,22 +507,10 @@ function hideLoadingMessage() {
 /* ============================================================
    16. 将来の拡張用スタブ関数
 ============================================================ */
-
-/**
- * M5Stack や外部デバイスへ角度データを送信する関数のスタブ。
- *
- * @param {number}  angleDeg - 現在の角度 [度]
- * @param {boolean} isOver   - 制限超過フラグ
- */
 function sendToM5Stack(angleDeg, isOver) {
-  // TODO: フェーズ2で実装予定
+  // TODO: フェーズ3で実装予定
 }
 
-/**
- * 計測データをログとして記録するスタブ。
- *
- * @param {number} angleDeg - 記録する角度 [度]
- */
 function logMeasurement(angleDeg) {
   // TODO: ログ・CSV出力機能用スタブ
 }

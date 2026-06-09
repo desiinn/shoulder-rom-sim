@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>肩可動域チェッカー試作</title>
+  <title>肩可動域シミュレーター試作</title>
 
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
@@ -47,13 +47,24 @@
     /* ===== ヘッダー ===== */
     header {
       width: 100%;
-      padding: 12px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 0; /* 内部のインナー側でパディングを制御するため0にする */
+    }
+    .header-inner {
+      max-width: 680px;      /* ボディの最大幅と統一 */
+      width: 100%;
+      margin: 0 auto;        /* 中央配置 */
+      padding: 12px 16px;    /* 左右の余白をカードエリアと統一 */
+      display: flex;
+      align-items: center;
+      justify-content: space-between; /* 左右に綺麗に振り分け */
+      box-sizing: border-box;
+    }
+    .header-left {
       display: flex;
       align-items: center;
       gap: 12px;
-      background: var(--surface);
-      border-bottom: 1px solid var(--border);
-      z-index: 10;
     }
     header .logo-mark {
       width: 32px; height: 32px;
@@ -71,6 +82,7 @@
       font-weight: 600;
       letter-spacing: 0.05em;
       line-height: 1.3;
+      margin: 0;
     }
     header h1 span {
       display: block;
@@ -79,16 +91,27 @@
       font-weight: 400;
     }
     .status-badge {
-      margin-left: auto;
+      padding: 6px 12px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+      border-radius: 4px;
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 11px;
+      gap: 8px;
+      min-width: 120px;
+      justify-content: center;
+      box-sizing: border-box;
+    }
+    .status-badge span {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.05em;
     }
     .status-dot {
       width: 8px; height: 8px;
       border-radius: 50%;
       background: var(--text-muted);
+      flex-shrink: 0; /
     }
     .status-dot.active { background: var(--ok-color); box-shadow: 0 0 8px var(--ok-color); }
     .status-dot.warn   { background: var(--warn-color); box-shadow: 0 0 8px var(--warn-color); }
@@ -179,9 +202,14 @@
 
     /* ===== 情報・操作系パネル群 ===== */
     .panel-vertical {
+      max-width: 680px;      /* ヘッダーインナーと完全に一致 */
+      width: 100%;
+      margin: 0 auto;        /* 中央配置 */
+      padding: 16px;         /* 左右の余白をヘッダーと統一 */
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 16px;
+      box-sizing: border-box;
     }
 
     .metric-card {
@@ -302,14 +330,19 @@
 <body>
 
 <header>
-  <div class="logo-mark">肩</div>
-  <h1>
-    肩可動域チェッカー
-    <span>SHOULDER ROM SIMLATOR</span>
-  </h1>
-  <div class="status-badge">
-    <div class="status-dot" id="pose-status-dot"></div>
-    <span id="pose-status-text">初期化中...</span>
+  <div class="header-inner">
+    <div class="header-left">
+      <div class="logo-mark">肩</div>
+      <h1>
+        肩可動域シミュレーター
+        <span>SHOULDER ROM SIMULATOR</span>
+      </h1>
+    </div>
+    
+    <div class="status-badge" id="pose-status-container">
+      <div class="status-dot" id="pose-status-dot"></div>
+      <span id="pose-status-text">初期化中...</span>
+    </div>
   </div>
 </header>
 
@@ -345,22 +378,23 @@
       </div>
     </div>
 
-    <div class="metric-card">
-      <div class="card-header">
-        <span class="label">制限角度の設定 [30° - 150°]</span>
-      </div>
-      
-      <div class="control-container">
-        <input type="range" id="limit-slider" class="custom-slider" min="30" max="150" value="70" step="5">
-        <input type="number" id="limit-input" class="limit-num-input" min="30" max="150" value="70" step="5">
-      </div>
-
-      <div class="status-row">
-        <span class="label" style="border: none; margin: 0; padding: 0;">ステータス:</span>
-        <div class="status-text-large" id="status-display">---</div>
-      </div>
+  <div class="metric-card">
+    <div class="card-header">
+      <span class="label">制限角度の設定 [30° - 150°]</span>
+    </div>
+    
+    <div class="control-container">
+      <input type="range" id="limit-slider" class="custom-slider" min="30" max="150" value="70" step="5">
+      <input type="number" id="limit-input" class="limit-num-input" min="30" max="150" value="70" step="5">
     </div>
 
+    <div class="status-row" style="margin-top: 12px;">
+      <span class="label" style="border: none; margin: 0; padding: 0;">音声アラート:</span>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" id="audio-toggle" style="width: 20px; height: 20px; accent-color: var(--accent); cursor: pointer;">
+        <label for="audio-toggle" style="font-size: 14px; font-weight: 700; color: var(--text-primary); cursor: pointer; user-select: none;">有効</label>
+      </div>
+    </div>
   </div>
 
 </main>
